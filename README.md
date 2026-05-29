@@ -23,10 +23,11 @@ Node 18+. (`spa_server.py` needs only Python 3 — no pip deps.)
 
 1. **Capture** the live site with Playwright (`record.mjs`) — video, staged frames,
    full-page screenshot, and a DOM + computed-style dump.
-2. **Mirror the real assets** — load the live site, navigate every route, scroll to
-   trigger lazy/animation assets, and record every requested URL (images, the
-   *optimized* variants like Nuxt `/_ipx/...`, fonts, audio, i18n JSON), then download
-   them. (See "Gotchas" — this is where most time is lost.)
+2. **Mirror the real assets** with `clone.mjs` — loads the site, scrolls to trigger
+   lazy/animation assets, captures *every* same-origin response (images, the optimized
+   `/_ipx/...` variants, fonts, audio, JS/CSS, payload JSON) and writes them to disk
+   mirroring their URL path, plus the hydrated HTML of each page. Cleaner than
+   scraping + curl loops — the browser already resolved every URL.
 3. **Serve offline** with `spa_server.py` — a SPA-fallback + HTTP-Range static server,
    so client-side routes and media seeking work without the original backend.
 
@@ -39,6 +40,16 @@ node record.mjs <target-url> <output-dir>     # e.g. node record.mjs https://exa
 Outputs: session `*.webm`, `frames/load_*|hero_*|hover_*|scroll_*.png`, `full_page.png`,
 and `dom-dump.json` (per-section computed styles + element counts).
 Tune the `hoverTargets` / `sections` / `counts` selectors to the site you capture.
+
+### `clone.mjs` — full offline mirror
+Downloads the whole site (assets + hydrated HTML) for offline serving.
+```bash
+node clone.mjs <url> [out-dir] [route1,route2,...]
+# e.g. node clone.mjs https://example.com ./clone /about,/shop
+cd ./clone && python ../spa_server.py 8013     # then open http://127.0.0.1:8013
+```
+Captures same-origin responses only (edit the origin check to also grab a CDN). Pages are
+saved as `index.html`; assets keep their URL path (literal `&` in `/_ipx/` paths preserved).
 
 ### `record_scroll.mjs` — scroll-behavior check
 ```bash
