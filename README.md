@@ -1,12 +1,14 @@
 # web-clone-recorder
 
-Playwright-based capture toolkit for reverse-engineering / faithfully reproducing
-JS-heavy websites (Webflow, Nuxt/SPA, GSAP sliders, custom loaders). It records what
-a real browser sees — video, staged frames, a full-page screenshot, and a DOM +
-computed-style dump — so you can rebuild the look, motion, and layout offline.
+The toolkit used to reverse-engineer and fully clone JS-heavy websites
+(Webflow, Nuxt/SPA, GSAP sliders, custom loaders) — capture what a real browser
+renders, then rebuild and serve it offline.
 
-> No secrets, tokens, or API keys are stored in this repo. The scripts only drive a
-> headless browser against a public URL.
+The **power tool is Playwright** (real headless browser): static HTML scraping is not
+enough for these sites, because the displayed assets are loaded/optimized at runtime.
+
+> No secrets, tokens, or API keys are in this repo. The scripts only drive a headless
+> browser against a public URL and serve local files.
 
 ## Install
 
@@ -15,56 +17,63 @@ npm install
 npx playwright install chromium
 ```
 
-Requires Node 18+.
+Node 18+. (`spa_server.py` needs only Python 3 — no pip deps.)
+
+## The workflow
+
+1. **Capture** the live site with Playwright (`record.mjs`) — video, staged frames,
+   full-page screenshot, and a DOM + computed-style dump.
+2. **Mirror the real assets** — load the live site, navigate every route, scroll to
+   trigger lazy/animation assets, and record every requested URL (images, the
+   *optimized* variants like Nuxt `/_ipx/...`, fonts, audio, i18n JSON), then download
+   them. (See "Gotchas" — this is where most time is lost.)
+3. **Serve offline** with `spa_server.py` — a SPA-fallback + HTTP-Range static server,
+   so client-side routes and media seeking work without the original backend.
 
 ## Tools
 
-### 1. `record.mjs` — full capture
-Captures the loader phase, hero-slider cycles, hover states, a scroll-through, a
-full-page screenshot, and a DOM + computed-style dump.
-
+### `record.mjs` — full capture
 ```bash
-node record.mjs <target-url> <output-dir>
-# example:
-node record.mjs https://example.com ./out
+node record.mjs <target-url> <output-dir>     # e.g. node record.mjs https://example.com ./out
+```
+Outputs: session `*.webm`, `frames/load_*|hero_*|hover_*|scroll_*.png`, `full_page.png`,
+and `dom-dump.json` (per-section computed styles + element counts).
+Tune the `hoverTargets` / `sections` / `counts` selectors to the site you capture.
+
+### `record_scroll.mjs` — scroll-behavior check
+```bash
+node record_scroll.mjs <target-url>           # -> ./out-scroll/
 ```
 
-Outputs in `<output-dir>/`:
-- `*.webm` — full session video
-- `frames/load_*.png` — loader animation (one frame / 250ms for the first 5s)
-- `frames/hero_slide_*.png` — hero slider slides
-- `frames/hover_*.png` — hover states
-- `frames/scroll_*.png` — scroll-through (every 400px)
-- `full_page.png` — full-page screenshot
-- `dom-dump.json` — title, viewport, per-section computed styles (color, font, spacing,
-  shadow, transform, …) and element counts
-
-**Tuning:** the `hoverTargets`, `sections`, and `counts` selectors near the top/middle
-of `record.mjs` are examples tuned for one site. Edit them to match the CSS classes of
-the site you are capturing.
-
-### 2. `record_scroll.mjs` — scroll-behavior check
-Screenshots the viewport at a series of scroll positions — handy for verifying smooth
-scroll / pinned sections / scroll-triggered animation.
-
+### `record_responsive.mjs` — responsive check
 ```bash
-node record_scroll.mjs <target-url>   # writes ./out-scroll/
+node record_responsive.mjs                    # edit URL const inside -> ./out-responsive/
 ```
 
-### 3. `record_responsive.mjs` — responsive check
-Captures the page at desktop / tablet / mobile / fold widths.
-
+### `spa_server.py` — offline SPA + Range server
+Serve a fully-downloaded clone. Falls back to `index.html` for unknown routes (client-side
+routing) and supports HTTP Range (206) so video/audio seeking works.
 ```bash
-node record_responsive.mjs            # edit the URL constant inside, writes ./out-responsive/
+python spa_server.py 8013                     # serves the folder it lives in at :8013
 ```
 
-## Offline-clone method (notes)
+## Gotchas (hard-won)
 
-When fully cloning a JS-heavy site to serve statically, watch for:
-- **Image optimizers** (`/_ipx/`, Next/Nuxt image): the displayed assets are the
-  optimized variants, not the source files — capture/serve those too.
-- **Fonts**: self-host the woff2 files; webfont CDNs often block hotlinking.
-- **Audio / video**: lazy-loaded; trigger the interaction that loads them before capture.
-- **Background requests**: some visuals only appear after XHR/fetch — wait for
-  `networkidle` and scroll the section into view first.
-- **Line endings**: keep assets as-is (avoid CRLF rewrites on binary-ish text assets).
+- **Real-browser capture, not static scans.** Nuxt `/_ipx/...` optimized WebP are the
+  *actual* displayed images; also `/_fonts/`, per-chapter audio (`.opus`/`.mp3`),
+  `/_i18n/.../messages.json` only show up via a live browser session.
+- **`/_ipx/` URLs are HTML-encoded** (`&amp;`) in markup — `html.unescape()` before
+  downloading. The `&` is in the path (no `?`); save files with the literal `&`.
+- **`curl` inside `while read … done < file` eats the loop's stdin** → empty downloads.
+  Add `</dev/null` to the curl call.
+- **Windows `open('w')` writes CRLF** → URL lists get `\r` and 404. Use `newline='\n'`.
+- **Headless Chromium has no GPU** → WebGL/curtains.js may log "Unable to create a Plane".
+  Not a clone defect — re-verify with
+  `--use-gl=angle --use-angle=swiftshader --enable-unsafe-swiftshader --ignore-gpu-blocklist`.
+- **Chapter/route HTML may 403** — don't bypass. A SPA-fallback server (serve file if it
+  exists, else `index.html`) makes every client-rendered route work offline anyway.
+- **Verify, don't assume:** final check = Playwright against the LOCAL server, navigate
+  all pages, assert 0 failed requests (≥400) and 0 console errors.
+
+## The engine
+- Playwright — https://github.com/microsoft/playwright
