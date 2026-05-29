@@ -1,0 +1,6 @@
+node_modules/
+out/
+out-*/
+*.webm
+frames/
+.DS_Store
